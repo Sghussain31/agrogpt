@@ -22,13 +22,13 @@ export function MarketPostHarvestPage() {
 
   const candidates: Crop[] = useMemo(
     () => [
-      { name: 'Green gram (Moong)', depletion: { n: 8, p: 10, k: 10 } },
-      { name: 'Sesame', depletion: { n: 10, p: 12, k: 14 } },
-      { name: 'Sorghum', depletion: { n: 14, p: 10, k: 16 } },
-      { name: 'Sunflower', depletion: { n: 16, p: 12, k: 18 } },
-      { name: 'Maize', depletion: { n: 22, p: 18, k: 20 } },
+      { name: t('data.crop.greengram', 'Green gram (Moong)'), depletion: { n: 8, p: 10, k: 10 } },
+      { name: t('data.crop.sesame', 'Sesame'), depletion: { n: 10, p: 12, k: 14 } },
+      { name: t('data.crop.sorghum', 'Sorghum'), depletion: { n: 14, p: 10, k: 16 } },
+      { name: t('data.crop.sunflower', 'Sunflower'), depletion: { n: 16, p: 12, k: 18 } },
+      { name: t('data.crop.maize', 'Maize'), depletion: { n: 22, p: 18, k: 20 } },
     ],
-    [],
+    [t],
   )
 
   const ranked = useMemo(

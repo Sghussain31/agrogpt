@@ -1,11 +1,17 @@
-import { AlertTriangle, CloudRain, Droplets, Flame, MapPin, Sprout } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Droplets, Flame, Map, MapPin, Sprout } from 'lucide-react'
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react'
 import { GlassCard } from '../components/GlassCard'
+import { SkeletonCard } from '../components/Skeleton'
 import { useTranslation } from 'react-i18next'
 import { calculateFertilizer, calculateIrrigation, inferCropType } from '../lib/formulas'
 import { getActiveCrops, initDatabase } from '../lib/repository'
 import type { CropRecord } from '../lib/db'
 import { detectCityFromGeolocation, getSoilProfile } from '../lib/geolocation'
+import { WeatherCard } from '../components/WeatherCard'
+import type { WeatherData } from '../features/gis/services/weatherService'
+
+// Lazy-load the heavy Leaflet bundle so it doesn't block initial render
+const FarmMap = lazy(() => import('../components/FarmMap').then(m => ({ default: m.FarmMap })))
 
 function WidgetHeader({
   icon,
@@ -38,10 +44,14 @@ const DEMO_HUMIDITY_PCT = 62
 export function DashboardPage() {
   const { t } = useTranslation()
   const [location, setLocation] = useState('Hyderabad')
-  const [soil, setSoil] = useState('Red Sandy Loam')
+  const [rawSoil, setSoil] = useState('Red Sandy Loam')
+  const [mapCenter, setMapCenter] = useState<[number, number]>([17.385, 78.4867])
+  const [weather, setWeather] = useState<WeatherData | null>(null)
+  const soil = t(`data.soil.${rawSoil.toLowerCase().replace(/[^a-z]/g, '')}`, rawSoil)
 
   const [crops, setCrops] = useState<CropRecord[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadingCrops, setLoadingCrops] = useState(true)
 
   useEffect(() => {
     let alive = true
@@ -52,7 +62,7 @@ export function DashboardPage() {
           setLocation(city)
           setSoil(getSoilProfile(city))
         }
-      } catch (e) {
+      } catch {
         // Fallbacks
       }
     })()
@@ -69,23 +79,31 @@ export function DashboardPage() {
         const active = await getActiveCrops()
         if (alive) setCrops(active)
       } catch (e) {
-        if (alive) setLoadError(e instanceof Error ? e.message : 'Load failed')
+        if (alive) setLoadError(e instanceof Error ? e.message : t('data.error.loadFailed'))
+      } finally {
+        if (alive) setLoadingCrops(false)
       }
     })()
     return () => {
       alive = false
     }
-  }, [])
+  }, [t])
 
   const primaryCrop = crops[0]
-  const cropName = primaryCrop?.name ?? 'Cotton'
+  const rawCropName = primaryCrop?.name ?? 'Cotton'
   const cropArea = primaryCrop?.area ?? 2
+  
+  // Dynamic translation strategy for DB values using a sanitized key fallback
+  const cropKey = `data.crop.${rawCropName.toLowerCase().replace(/[^a-z]/g, '')}`
+  const cropName = t(cropKey, rawCropName)
 
   const cropType = useMemo(() => inferCropType(cropName), [cropName])
+  const activeTemp = weather?.temperature ?? DEMO_TEMP_C
+  const activeHumidity = weather?.humidity ?? DEMO_HUMIDITY_PCT
 
   const irrigation = useMemo(
-    () => calculateIrrigation(DEMO_TEMP_C, DEMO_HUMIDITY_PCT, cropType),
-    [cropType],
+    () => calculateIrrigation(activeTemp, activeHumidity, cropType),
+    [cropType, activeTemp, activeHumidity],
   )
 
   const fertilizer = useMemo(() => calculateFertilizer(cropArea, 'flowering'), [cropArea])
@@ -127,19 +145,19 @@ export function DashboardPage() {
               </p>
             </div>
             <div className="glass-card mt-2 p-4 lg:mt-0">
-              <div className="text-xs font-semibold text-white/80">{t('dashboard.zeroInput')}</div>
+              <div className="text-xs font-semibold text-white/80">{t('dashboard.liveEnvironment', { defaultValue: 'Live Environment' })}</div>
               <div className="mt-2 grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-                  <div className="text-lg font-semibold text-white">{DEMO_TEMP_C}°C</div>
+                  <div className="text-lg font-semibold text-white">{Math.round(activeTemp)}°C</div>
                   <div className="text-[11px] text-white/55">{t('dashboard.temp')}</div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-                  <div className="text-lg font-semibold text-white">{DEMO_HUMIDITY_PCT}%</div>
+                  <div className="text-lg font-semibold text-white">{Math.round(activeHumidity)}%</div>
                   <div className="text-[11px] text-white/55">{t('dashboard.humidity')}</div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-                  <div className="text-lg font-semibold text-white">{t('dashboard.low')}</div>
-                  <div className="text-[11px] text-white/55">{t('dashboard.wind')}</div>
+                  <div className="text-lg font-semibold text-white">{weather ? `${Math.round(weather.windSpeed)}` : t('dashboard.low')}</div>
+                  <div className="text-[11px] text-white/55">{t('dashboard.wind')} km/h</div>
                 </div>
               </div>
             </div>
@@ -147,10 +165,46 @@ export function DashboardPage() {
         </div>
       </GlassCard>
 
+      {/* Field Overview Map */}
+      <GlassCard className="p-5" variant="strong">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl border border-white/10 bg-white/5 text-white/80">
+              <Map size={18} />
+            </div>
+            <div>
+              <div className="agro-h2">Field Overview</div>
+              <div className="subtle mt-0.5">Live geospatial map · {location}</div>
+            </div>
+          </div>
+          <span className="glass-chip border-stroke-2 bg-primary-700/15 text-xs">
+            OpenStreetMap
+          </span>
+        </div>
+        <div className="h-72 overflow-hidden rounded-2xl border border-white/10">
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-white/40">
+                Loading map...
+              </div>
+            }
+          >
+            <FarmMap 
+              initialCenter={[17.385, 78.4867]} 
+              farmName={`${location} Farm`} 
+              onPositionChange={setMapCenter}
+            />
+          </Suspense>
+        </div>
+      </GlassCard>
+
       {/* Local-first formulas (IndexedDB crop → offline math) */}
+      {loadingCrops ? (
+        <SkeletonCard />
+      ) : (
       <GlassCard className="p-5">
         <div className="agro-h2">
-          {t('dashboard.offlineFormulasTitle', { defaultValue: 'Offline field math (local crops)' })}
+          {t('dashboard.offlineFormulasTitle', { defaultValue: 'Field Intelligence (local crops)' })}
         </div>
         <p className="subtle mt-1">
           {t('dashboard.offlineFormulasDesc', {
@@ -183,33 +237,11 @@ export function DashboardPage() {
           </div>
         </div>
       </GlassCard>
+      )}
 
       {/* Widgets */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <GlassCard className="p-5">
-          <WidgetHeader
-            icon={<CloudRain size={18} />}
-            title={t('dashboard.weather')}
-            meta={t('dashboard.weatherMeta')}
-          />
-          <div className="mt-4 grid grid-cols-3 gap-3">
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-              <div className="text-xs text-white/55">{t('dashboard.rain')}</div>
-              <div className="mt-1 text-lg font-semibold text-white">10%</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-              <div className="text-xs text-white/55">UV</div>
-              <div className="mt-1 text-lg font-semibold text-white">{t('dashboard.high')}</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-              <div className="text-xs text-white/55">{t('dashboard.wind')}</div>
-              <div className="mt-1 text-lg font-semibold text-white">8 km/h</div>
-            </div>
-          </div>
-          <div className="mt-4 rounded-2xl border border-stroke-2 bg-primary-700/15 p-3 text-sm text-white/80">
-            {t('dashboard.bestSprayWindow')}: <span className="font-semibold text-white">6:10–8:30 AM</span>
-          </div>
-        </GlassCard>
+        <WeatherCard lat={mapCenter[0]} lon={mapCenter[1]} onDataLoad={setWeather} />
 
         <GlassCard className="p-5">
           <WidgetHeader icon={<Droplets size={18} />} title={t('dashboard.soilHealth')} meta={t('dashboard.npkEstimation')} />

@@ -54,3 +54,26 @@
     @apply text-sm text-white/60;
   }
 }
+
+@layer utilities {
+  .animate-scan-line {
+    animation: scan-line 3s linear infinite;
+  }
+
+  @keyframes scan-line {
+    0% {
+      top: 0%;
+      opacity: 0;
+    }
+    10% {
+      opacity: 1;
+    }
+    90% {
+      opacity: 1;
+    }
+    100% {
+      top: 100%;
+      opacity: 0;
+    }
+  }
+}

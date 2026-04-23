@@ -1,12 +1,13 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
-import { readYieldUser } from '../lib/authSession'
+import { useAuth } from './AuthProvider'
 
-export function AuthGuard() {
+export function ProtectedRoute() {
+  const { session } = useAuth()
   const location = useLocation()
-
-  if (!readYieldUser()) {
+  
+  if (!session) {
     return <Navigate to="/auth" replace state={{ from: location }} />
   }
-
+  
   return <Outlet />
 }

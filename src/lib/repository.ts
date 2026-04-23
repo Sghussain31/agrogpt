@@ -49,6 +49,7 @@ async function migrateScansFromLocalStorage(): Promise<void> {
             meta: it.meta,
           }),
           imageBlob,
+          sync_status: 'pending',
         })
       }
     })
@@ -89,7 +90,7 @@ async function migrateLedgerFromLocalStorage(): Promise<void> {
           amount: row.amount,
           date: legacyDateToIso(row.date),
           notes: '',
-          synced: 0,
+          sync_status: 'pending',
         })
       }
     })
@@ -114,6 +115,7 @@ async function seedDefaultsIfEmpty(): Promise<void> {
       plantedDate: new Date().toISOString().slice(0, 10),
       area: 2,
       status: 'active',
+      sync_status: 'pending',
     })
   }
 
@@ -121,11 +123,11 @@ async function seedDefaultsIfEmpty(): Promise<void> {
   if (ledgerCount === 0) {
     const now = new Date().toISOString()
     const samples: Omit<LedgerRecord, 'id'>[] = [
-      { cropId: null, type: 'income', category: 'Cotton sale (advance)', amount: 18000, date: now, notes: '', synced: 0 },
-      { cropId: null, type: 'expense', category: 'Fertilizer (DAP + urea)', amount: 5400, date: now, notes: '', synced: 0 },
-      { cropId: null, type: 'expense', category: 'Diesel', amount: 1900, date: now, notes: '', synced: 0 },
-      { cropId: null, type: 'income', category: 'Subsidy credit', amount: 2200, date: now, notes: '', synced: 0 },
-      { cropId: null, type: 'expense', category: 'Labor (weeding)', amount: 3200, date: now, notes: '', synced: 0 },
+      { cropId: null, type: 'income', category: 'Cotton sale (advance)', amount: 18000, date: now, notes: '', sync_status: 'pending' },
+      { cropId: null, type: 'expense', category: 'Fertilizer (DAP + urea)', amount: 5400, date: now, notes: '', sync_status: 'pending' },
+      { cropId: null, type: 'expense', category: 'Diesel', amount: 1900, date: now, notes: '', sync_status: 'pending' },
+      { cropId: null, type: 'income', category: 'Subsidy credit', amount: 2200, date: now, notes: '', sync_status: 'pending' },
+      { cropId: null, type: 'expense', category: 'Labor (weeding)', amount: 3200, date: now, notes: '', sync_status: 'pending' },
     ]
     await db.transaction('rw', db.ledger, async () => {
       for (const row of samples) await db.ledger.add(row)
@@ -144,14 +146,19 @@ export async function getAllCrops(): Promise<CropRecord[]> {
   return db.crops.orderBy('plantedDate').reverse().toArray()
 }
 
-export async function addCrop(input: Omit<CropRecord, 'id'>): Promise<number> {
+export async function addCrop(input: Omit<CropRecord, 'id' | 'sync_status'>): Promise<number> {
   await initDatabase()
-  return db.crops.add(input as CropRecord)
+  return db.crops.add({ ...input, sync_status: 'pending' } as CropRecord)
 }
 
 export async function getLedgerEntries(): Promise<LedgerRecord[]> {
   await initDatabase()
   return db.ledger.orderBy('date').reverse().toArray()
+}
+
+export async function deleteLedgerEntry(id: number): Promise<void> {
+  await initDatabase()
+  await db.ledger.delete(id)
 }
 
 export async function addExpense(input: {
@@ -169,7 +176,7 @@ export async function addExpense(input: {
     amount: input.amount,
     date: input.date ?? new Date().toISOString(),
     notes: input.notes ?? '',
-    synced: 0,
+    sync_status: 'pending',
   })
 }
 
@@ -188,7 +195,7 @@ export async function addIncome(input: {
     amount: input.amount,
     date: input.date ?? new Date().toISOString(),
     notes: input.notes ?? '',
-    synced: 0,
+    sync_status: 'pending',
   })
 }
 
@@ -218,6 +225,7 @@ export async function addScan(input: {
     timestamp: input.timestamp ?? Date.now(),
     resultJson: input.resultJson,
     imageBlob: input.imageBlob,
+    sync_status: 'pending',
   })
 }
 
@@ -234,5 +242,5 @@ export async function clearAllScans(): Promise<void> {
 /** Unsynced ledger rows (for sync engine) */
 export async function getPendingLedgerRows(): Promise<LedgerRecord[]> {
   await initDatabase()
-  return db.ledger.where('synced').equals(0).toArray()
+  return db.ledger.where('sync_status').equals('pending').toArray()
 }

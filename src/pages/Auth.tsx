@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, MapPin } from 'lucide-react'
+import { Loader2, FlaskConical } from 'lucide-react'
 import { GlassCard } from '../components/GlassCard'
 import { cn } from '../lib/cn'
-import { readYieldUser, writeYieldUser } from '../lib/authSession'
-import { handleGoogleSignIn } from '../lib/googleAuthMock'
-import { db, upsertOfflineMetadata } from '../lib/db'
+import { useTranslation } from 'react-i18next'
+import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../components/AuthProvider'
 
-type AuthMode = 'login' | 'register'
+type AuthMode = 'google' | 'phone'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -32,138 +32,51 @@ function GoogleIcon({ className }: { className?: string }) {
   )
 }
 
-import { detectCityFromGeolocation } from '../lib/geolocation'
-
 export function Auth() {
+  const { t } = useTranslation()
+  const { devLogin } = useAuth()
   const navigate = useNavigate()
-  const [mode, setMode] = useState<AuthMode>('login')
+  const [mode, setMode] = useState<AuthMode>('google')
   const [phone, setPhone] = useState('')
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [city, setCity] = useState('')
-  const [loginGoogleEmail, setLoginGoogleEmail] = useState<string | null>(null)
-  const [loginGoogleName, setLoginGoogleName] = useState('')
+  const [otp, setOtp] = useState('')
+  const [step, setStep] = useState<'phone' | 'otp'>('phone')
   const [busy, setBusy] = useState(false)
-  const [locBusy, setLocBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (readYieldUser()) {
-      navigate('/dashboard', { replace: true })
-    }
-  }, [navigate])
-
-  const resetGoogleLoginState = useCallback(() => {
-    setLoginGoogleEmail(null)
-    setLoginGoogleName('')
-  }, [])
-
-  useEffect(() => {
-    resetGoogleLoginState()
-    setError(null)
-  }, [mode, resetGoogleLoginState])
-
-  const onGoogleLogin = async () => {
+  const handleGoogleLogin = async () => {
     setError(null)
     setBusy(true)
-    try {
-      const mock = await handleGoogleSignIn()
-      if (mode === 'login') {
-        setLoginGoogleEmail(mock.email)
-        setLoginGoogleName(mock.name)
-      } else {
-        setEmail(mock.email)
-        if (!name.trim()) setName(mock.name)
-      }
-    } finally {
+    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' })
+    if (error) {
+      setError(error.message)
       setBusy(false)
     }
   }
 
-  const fillCity = async () => {
-    setLocBusy(true)
-    setError(null)
-    try {
-      const c = await detectCityFromGeolocation()
-      setCity(c)
-    } catch {
-      setCity('Hyderabad')
-    } finally {
-      setLocBusy(false)
-    }
-  }
-
-  const finishSession = async (session: {
-    name: string
-    phone: string
-    email?: string
-  }) => {
-    writeYieldUser(session)
-    navigate('/dashboard', { replace: true })
-  }
-
-  const handleLoginSubmit = async (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError(null)
-    const p = phone.trim()
-    if (!p) {
-      setError('Phone number is required.')
-      return
-    }
     setBusy(true)
-    try {
-      const existing = await db.offlineMetadata.get(1)
-      const sessionName =
-        loginGoogleName.trim() || existing?.name || ''
-      const sessionEmail =
-        loginGoogleEmail ?? existing?.email
-      await upsertOfflineMetadata({
-        name: sessionName,
-        phone: p,
-        email: sessionEmail,
-        city: existing?.city,
-      })
-      await finishSession({
-        name: sessionName || 'Farmer',
-        phone: p,
-        email: sessionEmail,
-      })
-    } finally {
-      setBusy(false)
+    setError(null)
+    const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`
+    const { error } = await supabase.auth.signInWithOtp({ phone: formattedPhone })
+    if (error) {
+      setError(error.message)
+    } else {
+      setStep('otp')
     }
+    setBusy(false)
   }
 
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError(null)
-    const n = name.trim()
-    const p = phone.trim()
-    if (!n) {
-      setError('Name is required.')
-      return
-    }
-    if (!p) {
-      setError('Phone number is required.')
-      return
-    }
-    const em = email.trim()
     setBusy(true)
-    try {
-      await upsertOfflineMetadata({
-        name: n,
-        phone: p,
-        email: em || undefined,
-        city: city.trim() || undefined,
-        replaceOptional: true,
-      })
-      await finishSession({
-        name: n,
-        phone: p,
-        email: em || undefined,
-      })
-    } finally {
-      setBusy(false)
+    setError(null)
+    const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`
+    const { error } = await supabase.auth.verifyOtp({ phone: formattedPhone, token: otp, type: 'sms' })
+    if (error) {
+      setError(error.message)
     }
+    setBusy(false)
   }
 
   const inputClass =
@@ -174,207 +87,142 @@ export function Auth() {
       <div className="w-full max-w-md">
         <GlassCard variant="strong" className="p-8 shadow-glass">
           <div className="mb-8 text-center">
-            <h1 className="agro-h1 text-2xl sm:text-3xl">AgroGPT</h1>
-            <p className="subtle mt-2">Sign in to continue to your farm workspace</p>
+            <h1 className="agro-h1 text-2xl sm:text-3xl">{t('auth.title')}</h1>
+            <p className="subtle mt-2">{t('auth.subtitle')}</p>
           </div>
 
-          {/* Glass mode toggle */}
           <div
             className="relative mb-8 flex rounded-2xl border border-white/10 bg-white/[0.04] p-1 backdrop-blur-xl"
             role="tablist"
-            aria-label="Authentication mode"
           >
             <button
               type="button"
               role="tab"
-              aria-selected={mode === 'login'}
-              onClick={() => setMode('login')}
+              aria-selected={mode === 'google'}
+              onClick={() => { setMode('google'); setError(null); }}
               className={cn(
                 'relative z-10 flex-1 rounded-xl py-2.5 text-sm font-semibold transition',
-                mode === 'login'
-                  ? 'text-white'
-                  : 'text-white/50 hover:text-white/75',
+                mode === 'google' ? 'text-white' : 'text-white/50 hover:text-white/75'
               )}
             >
-              Login
+              Google
             </button>
             <button
               type="button"
               role="tab"
-              aria-selected={mode === 'register'}
-              onClick={() => setMode('register')}
+              aria-selected={mode === 'phone'}
+              onClick={() => { setMode('phone'); setError(null); setStep('phone'); }}
               className={cn(
                 'relative z-10 flex-1 rounded-xl py-2.5 text-sm font-semibold transition',
-                mode === 'register'
-                  ? 'text-white'
-                  : 'text-white/50 hover:text-white/75',
+                mode === 'phone' ? 'text-white' : 'text-white/50 hover:text-white/75'
               )}
             >
-              Sign-in
+              Phone
             </button>
             <div
               className={cn(
                 'pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-xl border border-white/10 bg-white/[0.12] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md transition-transform duration-300 ease-out',
-                mode === 'register' && 'translate-x-full',
+                mode === 'phone' && 'translate-x-full'
               )}
               aria-hidden
             />
           </div>
 
           {error && (
-            <div
-              className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-200"
-              role="alert"
-            >
+            <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-200" role="alert">
               {error}
             </div>
           )}
 
-          {mode === 'login' ? (
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              <div>
-                <label htmlFor="login-phone" className="mb-1.5 block text-xs font-semibold text-white/70">
-                  Phone number <span className="text-secondary">*</span>
-                </label>
-                <input
-                  id="login-phone"
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className={inputClass}
-                  placeholder="+91 98765 43210"
-                  required
-                />
-              </div>
-
-              {loginGoogleEmail && (
-                <div>
-                  <label htmlFor="login-email" className="mb-1.5 block text-xs font-semibold text-white/70">
-                    Email (from Google)
-                  </label>
-                  <input
-                    id="login-email"
-                    type="email"
-                    readOnly
-                    value={loginGoogleEmail}
-                    className={cn(inputClass, 'cursor-default bg-white/[0.03] text-white/80')}
-                  />
-                </div>
-              )}
-
+          {mode === 'google' ? (
+            <div className="space-y-4">
               <button
                 type="button"
-                onClick={() => void onGoogleLogin()}
+                onClick={() => void handleGoogleLogin()}
                 disabled={busy}
                 className="flex w-full items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/[0.06] py-3 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-white/[0.1] disabled:opacity-50"
               >
                 {busy ? <Loader2 className="animate-spin" size={20} /> : <GoogleIcon className="h-5 w-5" />}
                 Sign in with Google
               </button>
-
-              <button
-                type="submit"
-                disabled={busy}
-                className="w-full rounded-2xl py-3 text-sm font-semibold text-white shadow-glowPrimary transition hover:opacity-95 disabled:opacity-50"
-                style={{ backgroundColor: '#2E7D32' }}
-              >
-                {busy ? 'Continuing…' : 'Continue'}
-              </button>
-            </form>
+            </div>
           ) : (
-            <form onSubmit={handleRegisterSubmit} className="space-y-4">
-              <div>
-                <label htmlFor="reg-name" className="mb-1.5 block text-xs font-semibold text-white/70">
-                  Name <span className="text-secondary">*</span>
-                </label>
-                <div className="flex gap-2">
+            step === 'phone' ? (
+              <form onSubmit={handleSendOtp} className="space-y-4">
+                <div>
+                  <label htmlFor="phone" className="mb-1.5 block text-xs font-semibold text-white/70">
+                    Phone Number
+                  </label>
                   <input
-                    id="reg-name"
-                    type="text"
-                    autoComplete="name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className={cn(inputClass, 'min-w-0 flex-1')}
-                    placeholder="Your full name"
+                    id="phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className={inputClass}
+                    placeholder="e.g. +919876543210"
                     required
                   />
-                  <button
-                    type="button"
-                    onClick={() => void fillCity()}
-                    disabled={locBusy}
-                    title="Detect location & set city"
-                    className="grid h-[46px] w-[46px] shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/[0.06] text-primary-300 backdrop-blur-md transition hover:border-stroke-2 hover:bg-white/[0.1] disabled:opacity-50"
-                    aria-label="Detect city from your location"
-                  >
-                    {locBusy ? (
-                      <Loader2 className="animate-spin" size={20} />
-                    ) : (
-                      <MapPin size={20} />
-                    )}
-                  </button>
                 </div>
-                {city ? (
-                  <p className="mt-1.5 text-xs text-white/50">
-                    City: <span className="text-white/75">{city}</span>
-                  </p>
-                ) : null}
-              </div>
-
-              <div>
-                <label htmlFor="reg-phone" className="mb-1.5 block text-xs font-semibold text-white/70">
-                  Phone number <span className="text-secondary">*</span>
-                </label>
-                <input
-                  id="reg-phone"
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className={inputClass}
-                  placeholder="+91 98765 43210"
-                  required
-                />
-              </div>
-
-              <div>
-                <label htmlFor="reg-email" className="mb-1.5 block text-xs font-semibold text-white/70">
-                  Email <span className="text-white/40">(optional)</span>
-                </label>
-                <input
-                  id="reg-email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className={inputClass}
-                  placeholder="you@example.com"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => void onGoogleLogin()}
-                disabled={busy}
-                className="flex w-full items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/[0.06] py-3 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-white/[0.10] disabled:opacity-50"
-              >
-                {busy ? <Loader2 className="animate-spin" size={20} /> : <GoogleIcon className="h-5 w-5" />}
-                Sign in with Google
-              </button>
-
-              <button
-                type="submit"
-                disabled={busy}
-                className="w-full rounded-2xl py-3 text-sm font-semibold text-white shadow-glowPrimary transition hover:opacity-95 disabled:opacity-50"
-                style={{ backgroundColor: '#2E7D32' }}
-              >
-                {busy ? 'Creating account…' : 'Continue'}
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full rounded-2xl py-3 text-sm font-semibold text-white shadow-glowPrimary transition hover:opacity-95 disabled:opacity-50"
+                  style={{ backgroundColor: '#2E7D32' }}
+                >
+                  {busy ? <Loader2 className="animate-spin inline-block mr-2" size={16} /> : null}
+                  Send OTP
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyOtp} className="space-y-4">
+                <div>
+                  <label htmlFor="otp" className="mb-1.5 block text-xs font-semibold text-white/70">
+                    Enter OTP sent to {phone}
+                  </label>
+                  <input
+                    id="otp"
+                    type="text"
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value)}
+                    className={inputClass}
+                    placeholder="123456"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full rounded-2xl py-3 text-sm font-semibold text-white shadow-glowPrimary transition hover:opacity-95 disabled:opacity-50"
+                  style={{ backgroundColor: '#2E7D32' }}
+                >
+                  {busy ? <Loader2 className="animate-spin inline-block mr-2" size={16} /> : null}
+                  Verify & Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep('phone')}
+                  className="w-full text-center text-xs font-medium text-white/60 hover:text-white mt-4 block"
+                >
+                  Change Phone Number
+                </button>
+              </form>
+            )
           )}
         </GlassCard>
+
+        {import.meta.env.DEV && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => { devLogin(); navigate('/dashboard', { replace: true }) }}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 py-3 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-500/20"
+            >
+              <FlaskConical size={16} />
+              Demo Mode (Bypass Login)
+            </button>
+            <p className="mt-2 text-center text-xs text-white/30">Dev only — not visible in production</p>
+          </div>
+        )}
       </div>
     </div>
   )

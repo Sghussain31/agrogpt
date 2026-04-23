@@ -1,5 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 
+export type SyncStatus = 'pending' | 'synced'
+
 /** Crop status for rotation / harvest tracking */
 export type CropStatus = 'active' | 'harvested' | 'planned'
 
@@ -12,6 +14,7 @@ export interface CropRecord {
   /** Area in acres */
   area: number
   status: CropStatus
+  sync_status: SyncStatus
 }
 
 export interface LedgerRecord {
@@ -24,8 +27,7 @@ export interface LedgerRecord {
   /** ISO datetime string */
   date: string
   notes?: string
-  /** 0 = pending sync, 1 = synced (mock server) */
-  synced: 0 | 1
+  sync_status: SyncStatus
 }
 
 export interface ScanRecord {
@@ -34,6 +36,37 @@ export interface ScanRecord {
   /** JSON string: mode, title, meta, etc. */
   resultJson: string
   imageBlob: Blob
+  sync_status: SyncStatus
+}
+
+export interface ProfileRecord {
+  id?: number
+  name?: string
+  email?: string
+  phone: string
+  totalAcreage: number
+  primaryCrop: string
+  soilType: string
+  city: string
+  location: string
+  sync_status?: SyncStatus
+}
+
+export interface SettingsRecord {
+  id?: number
+  language: string
+  fontSize: string
+  notificationsEnabled: boolean
+  biometricEnabled: boolean
+  lastSync: number
+  sync_status?: SyncStatus
+}
+
+export interface WeatherCacheRecord {
+  id: string
+  timestamp: number
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any
 }
 
 /** Single-device user profile synced from auth (id is always 1). */
@@ -44,6 +77,7 @@ export interface OfflineMetadataRecord {
   email?: string
   city?: string
   updatedAt: number
+  sync_status: SyncStatus
 }
 
 export class AgroGPTDatabase extends Dexie {
@@ -51,6 +85,9 @@ export class AgroGPTDatabase extends Dexie {
   ledger!: Table<LedgerRecord, number>
   scans!: Table<ScanRecord, number>
   offlineMetadata!: Table<OfflineMetadataRecord, number>
+  profiles!: Table<ProfileRecord, number>
+  settings!: Table<SettingsRecord, number>
+  weatherCache!: Table<WeatherCacheRecord, string>
 
   constructor() {
     super('AgroGPT')
@@ -61,6 +98,30 @@ export class AgroGPTDatabase extends Dexie {
     })
     this.version(2).stores({
       offlineMetadata: 'id',
+    })
+    this.version(3).stores({
+      crops: '++id, name, status, plantedDate, sync_status',
+      ledger: '++id, cropId, type, date, sync_status',
+      scans: '++id, timestamp, sync_status',
+      offlineMetadata: 'id, sync_status',
+    }).upgrade(tx => {
+      // Migrate old data to the new sync_status structure
+      return Promise.all([
+        tx.table('crops').toCollection().modify(c => { c.sync_status = 'pending' }),
+        tx.table('ledger').toCollection().modify(l => { 
+          l.sync_status = l.synced === 1 ? 'synced' : 'pending'
+          delete l.synced
+        }),
+        tx.table('scans').toCollection().modify(s => { s.sync_status = 'pending' }),
+        tx.table('offlineMetadata').toCollection().modify(m => { m.sync_status = 'pending' })
+      ])
+    })
+    this.version(4).stores({
+      profiles: '++id, phone',
+      settings: '++id',
+    })
+    this.version(5).stores({
+      weatherCache: 'id',
     })
   }
 }
@@ -93,5 +154,21 @@ export async function upsertOfflineMetadata(data: UpsertOfflineInput) {
     email: email || undefined,
     city: city || undefined,
     updatedAt: Date.now(),
+    sync_status: existing?.sync_status ?? 'pending',
   })
+}
+
+export async function initializeUserPreferences() {
+  const existing = await db.settings.get(1)
+  if (!existing) {
+    await db.settings.put({
+      id: 1,
+      language: 'en',
+      fontSize: 'medium',
+      notificationsEnabled: false,
+      biometricEnabled: false,
+      lastSync: 0,
+      sync_status: 'pending',
+    })
+  }
 }

@@ -8,6 +8,8 @@ import {
   Leaf,
   LayoutDashboard,
   ScanLine,
+  Settings,
+  User,
   X,
 } from 'lucide-react'
 import { cn } from '../lib/cn'
@@ -23,6 +25,7 @@ function useNavItems(): NavItem[] {
   const { t } = useTranslation()
   return useMemo(
     () => [
+      { to: '/profile', label: t('nav.profile', 'Profile'), icon: <User size={18} /> },
       { to: '/dashboard', label: t('nav.dashboard'), icon: <LayoutDashboard size={18} /> },
       { to: '/field-vision', label: t('nav.fieldVision'), icon: <ScanLine size={18} /> },
       {
@@ -30,8 +33,9 @@ function useNavItems(): NavItem[] {
         label: t('nav.precisionPlanning'),
         icon: <Calculator size={18} />,
       },
-      { to: '/digital-ledger', label: t('nav.digitalLedger'), icon: <BookOpenCheck size={18} /> },
-      { to: '/market', label: t('nav.market'), icon: <BarChart3 size={18} /> },
+      { to: '/digital-ledger', label: t('nav.digitalLedger', 'Digital Ledger'), icon: <BookOpenCheck size={18} /> },
+      { to: '/market', label: t('nav.market', 'Market'), icon: <BarChart3 size={18} /> },
+      { to: '/settings', label: t('nav.settings', 'Settings'), icon: <Settings size={18} /> },
     ],
     [t],
   )
@@ -76,6 +80,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMobileOpen(false)
   }, [location.pathname])
 
